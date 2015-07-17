@@ -35,7 +35,7 @@ $np->add_arg(
     );
 $np->add_arg(
     spec => 'type=s',
-    help => _gt('object type (node, service, or container)'),
+    help => _gt('object type (cluster, node, service, or container)'),
     required => 1
     );
 $np->add_arg(
@@ -144,6 +144,34 @@ SWITCH: for ($np->opts->get('type')) {
             $np->add_perfdata(label => 'cpu', value => ${${$result}{"last_metric"}}{"cpu"}, uom => "%");
             $np->add_perfdata(label => 'memory', value => ${${$result}{"last_metric"}}{"memory"}, uom => "B");
             $np->add_perfdata(label => 'disk', value => ${${$result}{"last_metric"}}{"disk"}, uom => "B");
+        }
+        else {
+            $np->add_message(CRITICAL, "Tutum API error: " . $response->status_line);
+        }
+        last SWITCH;
+    };
+    /^(node)?cluster$/ && do {
+        my $ua = LWP::UserAgent->new();
+        my $response = $ua->get("https://dashboard.tutum.co/api/v1/nodecluster/${\($np->opts->get('id'))}/",
+                               "Accept" => "application/json",
+                               "Authorization" => "ApiKey ${\($np->opts->get('user'))}:${\($np->opts->get('apikey'))}");
+        if ($response->is_success) {
+            my $result = decode_json $response->decoded_content;
+            for (${$result}{"state"}) {
+                /^(deployed|scaling)$/i && do {
+                    last;
+                };
+                /^(deploying|partly deployed)$/i && do {
+                    $np->add_message(WARNING, $_);
+                    last;
+                };
+                $np->add_message(CRITICAL, $_);
+            }
+            my $current = ${$result}{"current_num_nodes"};
+            my $target = ${$result}{"target_num_nodes"};
+            $np->add_message(OK, "$current/$target deployed/target");
+            # FIXME: add thresholds
+            $np->add_perfdata(label => 'nodes', value => $current);
         }
         else {
             $np->add_message(CRITICAL, "Tutum API error: " . $response->status_line);
