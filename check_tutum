@@ -92,6 +92,7 @@ SWITCH: for ($np->opts->get('type')) {
             }
             for (${$result}{"state"}) {
                 /^(running|scaling)$/i && do {
+                    $np->add_message(OK, $_);
                     last;
                 };
                 /^(starting|partly running|redeploying)$/i && do {
@@ -100,9 +101,21 @@ SWITCH: for ($np->opts->get('type')) {
                 };
                 $np->add_message(CRITICAL, $_);
             }
+            my $running = ${$result}{"running_num_containers"};
+            my $current = ${$result}{"current_num_containers"};
+            if (${$result}{"deployment_strategy"} eq "EVERY_NODE")
+            {   # if deployment strategy is every node, then we don't have a target number of containers
+                $np->add_message(OK, "$running/$current running/deployed");
+            }
+            else
+            {
+                my $target = ${$result}{"target_num_containers"};
+                $np->add_message(OK, "$running/$current/$target running/deployed/target");
+            }
             # FIXME: add thresholds
             # FIXME: add uptime
-            $np->add_perfdata(label => 'containers', value => ${$result}{"running_num_containers"});
+            $np->add_perfdata(label => 'containers', value => ${$result}{"current_num_containers"});
+            $np->add_perfdata(label => 'running containers', value => ${$result}{"running_num_containers"});
         }
         else {
             $np->add_message(CRITICAL, "Tutum API error: " . $response->status_line);
