@@ -114,8 +114,8 @@ SWITCH: for ($np->opts->get('type')) {
             }
             # FIXME: add thresholds
             # FIXME: add uptime
-            $np->add_perfdata(label => 'containers', value => ${$result}{"current_num_containers"});
-            $np->add_perfdata(label => 'running containers', value => ${$result}{"running_num_containers"});
+            $np->add_perfdata(label => 'containers', value => $current);
+            $np->add_perfdata(label => 'running containers', value => $running);
         }
         else {
             $np->add_message(CRITICAL, "Tutum API error: " . $response->status_line);
