@@ -1,0 +1,164 @@
+#!/usr/bin/perl -w
+#
+# Amanda backup status monitor for Nagios
+#
+# Note: this plugin operates by parsing the Amanda trace logs.  The nagios user
+# may not be allowed to read the logs.  One way to get around this is to
+# execute this script via sudo, and modify the sudoers file to allow the nagios
+# user to execute this script as the Amanda user without requiring a password.
+#
+# Authors: Hubert Chathi <hubert@muchlearning.org>
+# Loosely based on check_amanda.pl, developed by: Global Research Network Operations Center (GRNOC)
+#
+# License: GPL v2 or later
+
+use strict;
+use warnings;
+use lib '/usr/lib/amanda/perl';
+
+use Amanda::Config qw( :init :getconf );
+use DateTime;
+use Locale::gettext;
+use Nagios::Plugin;
+
+my $VERSION = '1.0';
+
+my $np = Nagios::Plugin->new(
+    version => $VERSION,
+    blurb => _gt('Amanda backup status monitor for Nagios'),
+    usage => "Usage: %s -C <config>",
+    extra => &showExtra()
+    );
+
+$np->add_arg (
+    spec => 'config|C=s',
+    help => _gt('Name of Amanda config to check'),
+    required => 1
+    );
+
+$np->getopts();
+
+my $pool = $np->opts->get('config');
+if ($pool ne ".." && $pool =~ /^([^\/\0]+)$/) {
+    $pool = $1;
+} else {
+    $np->nagios_exit(CRITICAL, "invalid config name: $pool");
+}
+
+config_init($CONFIG_INIT_EXPLICIT_NAME, $pool);
+my ($cfgerr_level, @cfgerr_errors) = config_errors();
+if ($cfgerr_level >= $CFGERR_WARNINGS) {
+    foreach my $error (@cfgerr_errors)
+    {
+        $np->add_message($cfgerr_level >= $CFGERR_ERRORS ? CRITICAL : OK, $error);
+    }
+    if ($cfgerr_level >= $CFGERR_ERRORS) {
+        my ($status, $message) = $np->check_messages('join' => ' - ');
+        $np->nagios_exit($status, $message);
+    }
+}
+my $LH = getconf($CNF_LOGDIR);
+
+my $running = 1;
+my $log = $LH."/log";
+my $logbase = "log";
+
+if (!open(DATA, $log))
+{
+    opendir(DIR, $LH);
+    my @files = readdir(DIR);
+    closedir(DIR);
+
+    $log = 0;
+
+    #sort files so that most recent log is last
+    my @sortedFiles = sort @files;
+    foreach my $file (@sortedFiles) {
+	if ($file =~ m/^log.*/ && !($file =~ m/error/)){
+            $log = $LH."/".$file;
+            $logbase = $file;
+	}
+    }
+
+    if (!$log)
+    {
+        $np->nagios_exit(UNKNOWN, "no logs found");
+    }
+
+    open(DATA, $log) or $np->nagios_exit(CRITICAL, "cannot open log file $log");
+    $running = 0;
+}
+
+my $starttime;
+my $duration;
+
+while (my $x = <DATA>){
+    if ($x =~ m/^ERROR/ || $x =~ m/^FATAL/){
+        chomp($x);
+        $np->add_message(CRITICAL, $x);
+    } elsif ($x =~ m/^FAIL\s\w*\s(\w* \S*) (.*)/){
+        $np->add_message(CRITICAL, "$1: $2");
+    } elsif (!defined $starttime && $x =~ m/^START \w* date ([0-9]*)/){
+        my ($year, $month, $day, $hour, $min, $sec) = unpack("A4A2A2A2A2A2", $1);
+        $starttime = DateTime->new(
+            year => int $year,
+            month => int $month,
+            day => int $day,
+            hour => int $hour,
+            minute => int $min,
+            second => int $sec,
+            time_zone => 'local'
+            );
+        $starttime->set_time_zone('UTC');
+    } elsif (!defined $duration && $x =~ m/^FINISH driver date [0-9]* time ([0-9.]*)/){
+        my $min = int ($1 / 60);
+        my $sec = $1 - ($min * 60);
+        $duration = DateTime::Duration->new(minutes => $min, seconds => int $sec);
+    }
+}
+
+close(DATA);
+
+if (!defined $duration){
+    if (!$running)
+    {
+        $np->add_message(CRITICAL, "did not finish");
+    }
+    else
+    {
+        if (defined $starttime)
+        {
+            $duration = DateTime->now(time_zone => 'UTC')->subtract_datetime($starttime);
+        }
+        else
+        {
+            $duration = DateTime::Duration->new(seconds => 0);
+        }
+        my ($hours,$minutes,$seconds) = $duration->in_units('hours','minutes','seconds');
+        my $durationstring = sprintf("%02d:%02d:%02d", $hours, $minutes, $seconds);
+        $np->add_message(OK, "running for $durationstring");
+    }
+} else {
+    my ($hours,$minutes,$seconds) = $duration->in_units('hours','minutes','seconds');
+    my $durationstring = sprintf("%02d:%02d:%02d", $hours, $minutes, $seconds);
+    $np->add_message(OK, "backed up in $durationstring");
+}
+
+my ($status, $message) = $np->check_messages('join' => ' - ');
+$np->nagios_exit($status, $logbase . " - " . $message);
+
+sub logD {
+        print STDERR 'DEBUG:   '.$_[0]."\n" if ($np->opts->verbose);
+}
+sub logW {
+        print STDERR 'WARNING: '.$_[0]."\n" if ($np->opts->verbose);
+}
+# Gettext wrapper
+sub _gt {
+        return gettext($_[0]);
+}
+sub showExtra {
+    return <<TEXT;
+Copyright (c) 2014 Hubert Chathi
+TEXT
+}
