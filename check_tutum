@@ -1,0 +1,159 @@
+#!/usr/bin/perl -w
+# Tutum service status monitor
+#
+# Authors: Hubert Chathi <hubert@muchlearning.org>
+#
+# License: GPL v2 or later
+
+use strict;
+use warnings;
+
+use Locale::gettext;
+use Nagios::Plugin;
+use LWP::UserAgent;
+use JSON;
+
+my $VERSION = '0.1';
+
+my $np = Nagios::Plugin->new(
+    version => $VERSION,
+    blurb => _gt('Tutum service status monitor for Nagios'),
+    usage => "Usage: %s <options>",
+    extra => &showExtra()
+    );
+
+$np->add_arg(
+    spec => 'user|u=s',
+    help => _gt('Tutum username'),
+    required => 1
+    );
+$np->add_arg(
+    spec => 'apikey|k=s',
+    help => _gt('Tutum API key'),
+    required => 1
+    );
+$np->add_arg(
+    spec => 'type=s',
+    help => _gt('object type (node, service, or container)'),
+    required => 1
+    );
+$np->add_arg(
+    spec => 'id|i=s',
+    help => _gt('object ID to check'),
+    required => 1
+    );
+
+$np->getopts();
+
+SWITCH: for ($np->opts->get('type')) {
+    /^container$/i && do {
+        my $ua = LWP::UserAgent->new();
+        my $response = $ua->get("https://dashboard.tutum.co/api/v1/container/${\($np->opts->get('id'))}/",
+                               "Accept" => "application/json",
+                               "Authorization" => "ApiKey ${\($np->opts->get('user'))}:${\($np->opts->get('apikey'))}");
+        if ($response->is_success) {
+            my $result = decode_json $response->decoded_content;
+            if (!${$result}{"synchronized"})
+            {
+                $np->add_message(WARNING, "not synchronized with service definition");
+            }
+            for (${$result}{"state"}) {
+                /^running$/i && do {
+                    last;
+                };
+                /^starting$/i && do {
+                    $np->add_message(WARNING, $_);
+                    last;
+                };
+                $np->add_message(CRITICAL, $_);
+            }
+            # FIXME: add thresholds
+            # FIXME: add uptime
+            $np->add_perfdata(label => 'cpu', value => ${${$result}{"last_metric"}}{"cpu"}, uom => "%");
+            $np->add_perfdata(label => 'memory', value => ${${$result}{"last_metric"}}{"memory"}, uom => "B");
+            $np->add_perfdata(label => 'disk', value => ${${$result}{"last_metric"}}{"disk"}, uom => "B");
+        }
+        else {
+            $np->add_message(CRITICAL, "Tutum API error: " . $response->status_line);
+        }
+        last SWITCH;
+    };
+    /^service$/i && do {
+        my $ua = LWP::UserAgent->new();
+        my $response = $ua->get("https://dashboard.tutum.co/api/v1/service/${\($np->opts->get('id'))}/",
+                               "Accept" => "application/json",
+                               "Authorization" => "ApiKey ${\($np->opts->get('user'))}:${\($np->opts->get('apikey'))}");
+        if ($response->is_success) {
+            my $result = decode_json $response->decoded_content;
+            if (!${$result}{"synchronized"})
+            {
+                $np->add_message(WARNING, "some containers not synchronized with service definition");
+            }
+            for (${$result}{"state"}) {
+                /^(running|scaling)$/i && do {
+                    last;
+                };
+                /^(starting|partly running|redeploying)$/i && do {
+                    $np->add_message(WARNING, $_);
+                    last;
+                };
+                $np->add_message(CRITICAL, $_);
+            }
+            # FIXME: add thresholds
+            # FIXME: add uptime
+            $np->add_perfdata(label => 'containers', value => ${$result}{"running_num_containers"});
+        }
+        else {
+            $np->add_message(CRITICAL, "Tutum API error: " . $response->status_line);
+        }
+        last SWITCH;
+    };
+    /^node$/i && do {
+        my $ua = LWP::UserAgent->new();
+        my $response = $ua->get("https://dashboard.tutum.co/api/v1/node/${\($np->opts->get('id'))}/",
+                               "Accept" => "application/json",
+                               "Authorization" => "ApiKey ${\($np->opts->get('user'))}:${\($np->opts->get('apikey'))}");
+        if ($response->is_success) {
+            my $result = decode_json $response->decoded_content;
+            for (${$result}{"state"}) {
+                /^(deployed|upgrading)$/i && do {
+                    last;
+                };
+                /^(deploying)$/i && do {
+                    $np->add_message(WARNING, $_);
+                    last;
+                };
+                $np->add_message(CRITICAL, $_);
+            }
+            # FIXME: add thresholds
+            $np->add_perfdata(label => 'containers', value => ${$result}{"current_num_containers"});
+            $np->add_perfdata(label => 'cpu', value => ${${$result}{"last_metric"}}{"cpu"}, uom => "%");
+            $np->add_perfdata(label => 'memory', value => ${${$result}{"last_metric"}}{"memory"}, uom => "B");
+            $np->add_perfdata(label => 'disk', value => ${${$result}{"last_metric"}}{"disk"}, uom => "B");
+        }
+        else {
+            $np->add_message(CRITICAL, "Tutum API error: " . $response->status_line);
+        }
+        last SWITCH;
+    };
+    $np->nagios_die("Unknown command: $_");
+}
+
+my ($status, $message) = $np->check_messages('join' => ' - ');
+$np->nagios_exit($status, $message);
+
+sub logD {
+        print STDERR 'DEBUG:   '.$_[0]."\n" if ($np->opts->verbose);
+}
+sub logW {
+        print STDERR 'WARNING: '.$_[0]."\n" if ($np->opts->verbose);
+}
+# Gettext wrapper
+sub _gt {
+        return gettext($_[0]);
+}
+sub showExtra {
+    return <<TEXT;
+Copyright (c) 2015 Hubert Chathi
+TEXT
+}
