@@ -1,0 +1,151 @@
+#!/usr/bin/python
+
+import os
+import sys
+try:
+    from configparser import RawConfigParser # Python 3.0+
+except:
+    from ConfigParser import RawConfigParser
+import argparse
+import tutum
+from jinja2 import Environment
+
+class ExtraOptsAction(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string):
+        s = values.split('@', 1)
+        section = s[0] or 'check_tutum'
+        if len(s) == 1:
+            pass #FIXME
+        else:
+            config = RawConfigParser()
+            config.read(s[1])
+            for name, value in config.items(section):
+                setattr(namespace, name, value)
+
+def indexByUri(collection):
+    return dict(map(lambda x: (x.resource_uri, x), collection))
+
+def writeConfig(f):
+    env = Environment()
+
+    clusters = indexByUri(tutum.NodeCluster.list())
+    clustertempl = env.from_string('''\
+define host {
+    use         tutum-cluster
+    host_name   {{cluster.name}}
+    address     0.0.0.0
+    _tutum_id   {{cluster.uuid}}
+    hostgroups  docker-servers
+}
+
+define hostgroup {
+    hostgroup_name {{cluster.name}}-cluster
+    alias          {{cluster.name}}
+}
+
+''')
+    for cluster in clusters.itervalues():
+        f.write(clustertempl.render(cluster=cluster))
+
+    # FIXME: index clusters, services, etc by resource_uri, to avoid linear search
+
+    nodes = indexByUri(tutum.Node.list())
+    nodetempl = env.from_string('''\
+define host {
+    use         generic-host
+    host_name   {{node.external_fqdn}}
+    address     {{node.public_ip}}
+    _tutum_id   {{node.uuid}}
+    parents     {{cluster.name}}
+    hostgroups  {{cluster.name}}-cluster,docker-servers
+}
+
+define service {
+    use generic-service
+    host_name {{node.external_fqdn}}
+    service_description Tutum node
+    check_command check_tutum_node!$_HOSTTUTUM_ID$
+}
+
+''')
+    for node in nodes.itervalues():
+        cluster = clusters[node.node_cluster]
+        #for c in clusters:
+        #    if node.node_cluster == c.resource_uri:
+        #        cluster = c
+        #        break
+        f.write(nodetempl.render(node=node, cluster=cluster))
+
+    # FIXME: stacks
+
+    services = indexByUri(tutum.Service.list())
+    servicetempl = env.from_string('''\
+define host {
+    use         tutum-service
+    host_name   {{service.public_dns}}
+    address     0.0.0.0
+    _tutum_id   {{service.uuid}}
+    hostgroups  docker-servers
+}
+
+define hostgroup {
+    hostgroup_name {{service.name}}-service
+    alias          {{service.name}}
+}
+
+''')
+    for service in services.itervalues():
+        f.write(servicetempl.render(service=service))
+
+    containers = tutum.Container.list()
+    containertempl = env.from_string('''\
+define host {
+    use         tutum-container
+    host_name   {{container.public_dns}}
+    address     {% if container.container_ports and container.container_ports|selectattr("published")|list|length == 0 %}{{container.private_ip}}{% else %}{{node.public_ip}}{% endif %}
+    _tutum_id   {{container.uuid}}
+    parents     {{service.public_dns}},{{node.external_fqdn}}
+    hostgroups  {{service.name}}-service,docker-servers
+}
+
+''')
+    for container in containers:
+        if container.state == 'Terminated' or container.state == 'Terminating':
+            next
+        service = services[container.service]
+        node = nodes[container.node]
+        f.write(containertempl.render(container=container, node=node, service=service))
+
+if __name__ == '__main__':
+    argparser = argparse.ArgumentParser(usage='Usage: %(prog)s [options]',
+                                        description='build nagios configuration for Tutum nodes and services')
+    argparser.add_argument('--version', action='version', version='''\
+%(prog)s 0.1
+Copyright 2015 MuchLearning
+''')
+    argparser.add_argument('--extra-opts',
+                           action=ExtraOptsAction,
+                           metavar='[section][@file]',
+                           help='Read options from an ini file. See http://nagiosplugins.org/extra-opts for usage and examples.  Note: if section is not specified, then it defaults to "check_tutum"')
+    argparser.add_argument('-u', '--user',
+                           action='store', dest='user',
+                           metavar="USERNAME",
+                           help="Tutum username")
+    argparser.add_argument('-k', '--apikey',
+                           action='store', dest='apikey',
+                           metavar="KEY",
+                           help="Tutum API key")
+    argparser.add_argument('-o', '--output',
+                           action='store', dest='output',
+                           metavar="FILE", type=argparse.FileType('w'),
+                           default=sys.stdout,
+                           help="Output file (output to stdout if not specified)")
+    #argparser.add_argument('-f', '--follow',
+    #                       action='store_true', dest='follow',
+    #                       help="Listen to Tutum events and regenerate on changes")
+    opts = argparser.parse_args()
+
+    tutum.user = opts.user
+    tutum.apikey = opts.apikey
+
+    writeConfig(opts.output)
