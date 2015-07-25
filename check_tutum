@@ -178,6 +178,34 @@ SWITCH: for ($np->opts->get('type')) {
         }
         last SWITCH;
     };
+    /^stack$/ && do {
+        my $ua = LWP::UserAgent->new();
+        my $response = $ua->get("https://dashboard.tutum.co/api/v1/stack/${\($np->opts->get('id'))}/",
+                               "Accept" => "application/json",
+                               "Authorization" => "ApiKey ${\($np->opts->get('user'))}:${\($np->opts->get('apikey'))}");
+        if ($response->is_success) {
+            my $result = decode_json $response->decoded_content;
+            if (!${$result}{"synchronized"})
+            {
+                $np->add_message(WARNING, "some containers not synchronized with service definition");
+            }
+            for (${$result}{"state"}) {
+                /^(running|scaling)$/i && do {
+                    $np->add_message(OK, $_);
+                    last;
+                };
+                /^(starting|redeploying|not running)$/i && do {
+                    $np->add_message(WARNING, $_);
+                    last;
+                };
+                $np->add_message(CRITICAL, $_);
+            }
+        }
+        else {
+            $np->add_message(CRITICAL, "Tutum API error: " . $response->status_line);
+        }
+        last SWITCH;
+    };
     $np->nagios_die("Unknown command: $_");
 }
 
