@@ -1,4 +1,5 @@
 #!/usr/bin/perl -w
+# nagios: -epn
 # Check that a Buildbot slave is connected to its master
 #
 # Authors: Hubert Chathi <hubert@muchlearning.org>
