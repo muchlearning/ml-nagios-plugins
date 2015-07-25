@@ -1,0 +1,84 @@
+#!/usr/bin/perl -w
+# Check that a Buildbot slave is connected to its master
+#
+# Authors: Hubert Chathi <hubert@muchlearning.org>
+#
+# License: GPL v2 or later
+
+use strict;
+use warnings;
+
+use Locale::gettext;
+use Nagios::Plugin;
+use LWP::UserAgent;
+use MIME::Base64;
+use JSON;
+
+my $VERSION = '0.1';
+
+my $np = Nagios::Plugin->new(
+    version => $VERSION,
+    blurb => _gt('Check that a Buildbot slave is connected to its master'),
+    usage => "Usage: %s <options>",
+    extra => &showExtra()
+    );
+
+$np->add_arg(
+    spec => 'url|u=s',
+    help => _gt('Base URL for Buildbot master'),
+    required => 1
+    );
+$np->add_arg(
+    spec => 'name|n=s',
+    help => _gt('Slave name'),
+    required => 1
+    );
+$np->add_arg(
+    spec => 'authorization|a=s',
+    help => _gt('Username:password on sites with basic authentication')
+    );
+
+$np->getopts();
+
+my $ua = LWP::UserAgent->new();
+my %params = ();
+if ($np->opts->get('authorization'))
+{
+    $params{'Authorization'} = "Basic ${\(encode_base64($np->opts->get('authorization')))}";
+}
+my $response = $ua->get("${\($np->opts->get('url'))}/json/slaves/${\($np->opts->get('name'))}?numbuilds=0", %params);
+sub trim {
+    return $_[0] =~ s/^\s+|\s+$//rg;
+}
+
+if ($response->is_success) {
+    my $result = decode_json $response->decoded_content;
+    if (${$result}{"connected"})
+    {
+        $np->add_message(OK, "version ${$result}{'version'}");
+    }
+}
+else
+{
+    $np->add_message(CRITICAL, "HTTP error: " . $response->status_line);
+}
+
+
+my ($status, $message) = $np->check_messages('join' => ' - ');
+$np->nagios_exit($status, $message);
+
+sub logD {
+        print STDERR 'DEBUG:   '.$_[0]."\n" if ($np->opts->verbose);
+}
+sub logW {
+        print STDERR 'WARNING: '.$_[0]."\n" if ($np->opts->verbose);
+}
+# Gettext wrapper
+sub _gt {
+        return gettext($_[0]);
+}
+sub showExtra {
+    return <<TEXT;
+Copyright (c) 2015 Hubert Chathi
+TEXT
+}
