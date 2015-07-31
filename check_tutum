@@ -142,8 +142,8 @@ SWITCH: for ($np->opts->get('type')) {
             # FIXME: add thresholds
             $np->add_perfdata(label => 'containers', value => ${$result}{"current_num_containers"});
             $np->add_perfdata(label => 'cpu', value => ${${$result}{"last_metric"}}{"cpu"}, uom => "%");
-            $np->add_perfdata(label => 'memory', value => ${${$result}{"last_metric"}}{"memory"}, uom => "B");
-            $np->add_perfdata(label => 'disk', value => ${${$result}{"last_metric"}}{"disk"}, uom => "B");
+            $np->add_perfdata(label => 'memory', value => ${${$result}{"last_metric"}}{"memory"}, uom => "B", max => ${$result}{"memory"}*1048576);
+            $np->add_perfdata(label => 'disk', value => ${${$result}{"last_metric"}}{"disk"}, uom => "B", max => ${$result}{"disk"}*1000000000);
         }
         else {
             $np->add_message(CRITICAL, "Tutum API error: " . $response->status_line);
