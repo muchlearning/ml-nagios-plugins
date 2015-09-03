@@ -70,13 +70,27 @@ define service {
 ''')
     for node in nodes.itervalues():
         cluster = clusters[node.node_cluster]
-        #for c in clusters:
-        #    if node.node_cluster == c.resource_uri:
-        #        cluster = c
-        #        break
         f.write(nodetempl.render(node=node, cluster=cluster))
 
-    # FIXME: stacks
+    stacks = indexByUri(tutum.Stack.list())
+    stacktempl = env.from_string('''\
+define host {
+    use         tutum-stack
+    host_name   {{stack.name}}.stack
+    address     0.0.0.0
+    _tutum_id   {{stack.uuid}}
+}
+
+define hostgroup {
+    hostgroup_name {{stack.name}}-stack
+    alias          {{stack.name}}
+}
+
+''')
+    for stack in stacks.itervalues():
+        if stack.state == 'Terminated' or stack.state == 'Terminating':
+            next
+        f.write(stacktempl.render(stack=stack))
 
     services = indexByUri(tutum.Service.list())
     servicetempl = env.from_string('''\
@@ -84,18 +98,22 @@ define host {
     use         tutum-service
     host_name   {{service.public_dns}}
     address     0.0.0.0
-    _tutum_id   {{service.uuid}}
-    hostgroups  docker-servers
+    _tutum_id   {{service.uuid}}{% if stack %}
+    parents     {{stack.name}}.stack{% endif %}
+    hostgroups  docker-servers{% if stack %},{{stack.name}}-stack{% endif %}
 }
 
 define hostgroup {
-    hostgroup_name {{service.name}}-service
+    hostgroup_name {{service.name}}{% if stack %}--{{stack.name}}{% endif %}-service
     alias          {{service.name}}
 }
 
 ''')
     for service in services.itervalues():
-        f.write(servicetempl.render(service=service))
+        if service.state == 'Terminated' or service.state == 'Terminating':
+            next
+        stack = service.stack and stacks[service.stack]
+        f.write(servicetempl.render(service=service, stack=stack))
 
     containers = tutum.Container.list()
     containertempl = env.from_string('''\
@@ -105,7 +123,7 @@ define host {
     address     {% if container.container_ports and container.container_ports|selectattr("published")|list|length == 0 %}{{container.private_ip}}{% else %}{{node.public_ip}}{% endif %}
     _tutum_id   {{container.uuid}}
     parents     {{service.public_dns}},{{node.external_fqdn}}
-    hostgroups  {{service.name}}-service,docker-servers
+    hostgroups  {{service.name}}{% if stack %}--{{stack.name}}{% endif %}-service,docker-servers
 }
 
 ''')
@@ -113,8 +131,9 @@ define host {
         if container.state == 'Terminated' or container.state == 'Terminating':
             next
         service = services[container.service]
+        stack = service.stack and stacks[service.stack]
         node = nodes[container.node]
-        f.write(containertempl.render(container=container, node=node, service=service))
+        f.write(containertempl.render(container=container, node=node, service=service, stack=stack))
 
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser(usage='Usage: %(prog)s [options]',
