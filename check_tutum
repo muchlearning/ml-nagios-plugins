@@ -194,7 +194,7 @@ SWITCH: for ($np->opts->get('type')) {
                     $np->add_message(OK, $_);
                     last;
                 };
-                /^(starting|redeploying|not running)$/i && do {
+                /^(starting|redeploying)$/i && do {
                     $np->add_message(WARNING, $_);
                     last;
                 };
