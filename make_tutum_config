@@ -89,7 +89,7 @@ define hostgroup {
 ''')
     for stack in stacks.itervalues():
         if stack.state == 'Terminated' or stack.state == 'Terminating':
-            next
+            continue
         f.write(stacktempl.render(stack=stack))
 
     services = indexByUri(tutum.Service.list())
@@ -111,7 +111,7 @@ define hostgroup {
 ''')
     for service in services.itervalues():
         if service.state == 'Terminated' or service.state == 'Terminating':
-            next
+            continue
         stack = service.stack and stacks[service.stack]
         f.write(servicetempl.render(service=service, stack=stack))
 
@@ -129,7 +129,7 @@ define host {
 ''')
     for container in containers:
         if container.state == 'Terminated' or container.state == 'Terminating':
-            next
+            continue
         service = services[container.service]
         stack = service.stack and stacks[service.stack]
         node = nodes[container.node]
