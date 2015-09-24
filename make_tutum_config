@@ -223,11 +223,14 @@ Copyright 2015 MuchLearning
         hf = hashfile()
         tf = teefile(hf, opts.output)
         writeConfig(tf)
+        opts.output.flush()
         lasthash = hf.hexdigest()
         if opts.restart_cmd:
             os.system(opts.restart_cmd)
         print "listening for events"
         def process_event(event):
+            # FIXME: filter out events that wouldn't cause configuration changes
+            # FIXME: throttle writes/restarts?
             global lasthash
             print "received event"
             hf = hashfile()
@@ -239,6 +242,7 @@ Copyright 2015 MuchLearning
                 lasthash = hf.hexdigest()
                 opts.output.seek(0)
                 opts.output.write(cf.get_contents())
+                opts.output.flush()
                 if opts.restart_cmd:
                     os.system(opts.restart_cmd)
 
