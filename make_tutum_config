@@ -9,6 +9,52 @@ except:
 import argparse
 import tutum
 from jinja2 import Environment
+from hashlib import sha256
+
+# plagiarising myself
+# this is based off of https://vcs.uhoreg.ca/git/cgit/hunchback/
+class hashfile(object):
+    __slots__ = ['h', 'digest', 'hexdigest']
+
+    def __init__(self):
+        self.h = sha256()
+        self.digest = self.h.digest
+        self.hexdigest = self.h.hexdigest
+
+    def write(self, data):
+        self.h.update(data)
+
+    def close(self):
+        pass
+
+class teefile(object):
+    __slots__ = ['children']
+
+    def __init__(self, *args):
+        self.children = args
+
+    def write(self, data):
+        for child in self.children:
+            child.write(data)
+
+    def close(self):
+        for child in self.children:
+            child.close()
+
+class cachedfile(object):
+    __slots__ = ['contents']
+
+    def __init__(self):
+        self.contents = []
+
+    def write(self, data):
+        self.contents.append(data)
+
+    def close(self):
+        pass
+
+    def get_contents(self):
+        return ''.join(self.contents)
 
 class ExtraOptsAction(argparse.Action):
     def __call__(self, parser, namespace, values, option_string):
@@ -159,12 +205,45 @@ Copyright 2015 MuchLearning
                            metavar="FILE", type=argparse.FileType('w'),
                            default=sys.stdout,
                            help="Output file (output to stdout if not specified)")
-    #argparser.add_argument('-f', '--follow',
-    #                       action='store_true', dest='follow',
-    #                       help="Listen to Tutum events and regenerate on changes")
+    argparser.add_argument('-f', '--follow',
+                           action='store_true', dest='follow',
+                           help="Listen to Tutum events and regenerate on changes")
+    argparser.add_argument('-r', '--restart-cmd',
+                           action='store', dest='restart_cmd',
+                           help="Command to run when configuration is changed (only used when following Tutum events)")
     opts = argparser.parse_args()
 
     tutum.user = opts.user
     tutum.apikey = opts.apikey
 
-    writeConfig(opts.output)
+    if opts.follow and opts.output == sys.stdout:
+            argparser.error('Must specify an output file in follow mode')
+
+    if opts.follow:
+        hf = hashfile()
+        tf = teefile(hf, opts.output)
+        writeConfig(tf)
+        lasthash = hf.hexdigest()
+        if opts.restart_cmd:
+            os.system(opts.restart_cmd)
+        print "listening for events"
+        def process_event(event):
+            global lasthash
+            print "received event"
+            hf = hashfile()
+            cf = cachedfile()
+            tf = teefile(hf, cf)
+            writeConfig(tf)
+            if lasthash != hf.hexdigest():
+                print "configuration changed"
+                lasthash = hf.hexdigest()
+                opts.output.seek(0)
+                opts.output.write(cf.get_contents())
+                if opts.restart_cmd:
+                    os.system(opts.restart_cmd)
+
+        events = tutum.TutumEvents()
+        events.on_message(process_event)
+        events.run_forever()
+    else:
+        writeConfig(opts.output)
