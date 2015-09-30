@@ -222,6 +222,7 @@ Copyright 2015 MuchLearning
     if opts.follow:
         hf = hashfile()
         tf = teefile(hf, opts.output)
+        opts.output.truncate()
         writeConfig(tf)
         opts.output.flush()
         lasthash = hf.hexdigest()
@@ -241,6 +242,7 @@ Copyright 2015 MuchLearning
                 print "configuration changed"
                 lasthash = hf.hexdigest()
                 opts.output.seek(0)
+                opts.output.truncate()
                 opts.output.write(cf.get_contents())
                 opts.output.flush()
                 if opts.restart_cmd:
@@ -250,4 +252,6 @@ Copyright 2015 MuchLearning
         events.on_message(process_event)
         events.run_forever()
     else:
+        if opts.output != sys.stdout:
+            opts.output.truncate()
         writeConfig(opts.output)
