@@ -1,0 +1,135 @@
+#!/usr/bin/python
+"""Check an OpenStack Swift service
+"""
+
+import os
+import sys
+try:
+    from configparser import RawConfigParser # Python 3.0+
+except:
+    from ConfigParser import RawConfigParser
+import argparse
+
+from swiftclient.client import Connection as SwiftConnection
+import nagiosplugin
+import logging
+import time
+
+_log = logging.getLogger('nagiosplugin')
+
+class ExtraOptsAction(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string):
+        s = values.split('@', 1)
+        section = s[0] or 'check_openstack_swift'
+        if len(s) == 1:
+            pass #FIXME
+        else:
+            config = RawConfigParser()
+            config.read(s[1])
+            for name, value in config.items(section):
+                setattr(namespace, name, value)
+
+class Account(nagiosplugin.Resource):
+    def __init__(self, connection):
+        self.connection = connection
+
+    def probe(self):
+        t = time.clock()
+        stats = self.connection.head_account()
+        _log.debug(repr(stats))
+        yield nagiosplugin.Metric('time', time.clock() - t, min=0, uom='s', context='time')
+        yield nagiosplugin.Metric('container_count', int(stats['x-account-container-count']), min=0, context='container-count')
+        yield nagiosplugin.Metric('object_count', int(stats['x-account-object-count']), min=0, context='object-count')
+        yield nagiosplugin.Metric('bytes_used', int(stats['x-account-bytes-used']), min=0, uom="B", context='bytes')
+        if stats.has_key('x-account-bytes-used-actual'):
+            yield nagiosplugin.Metric('bytes_used_actual', int(stats['x-account-bytes-used-actual']), min=0, uom="B", context='bytes-actual')
+
+class Container(nagiosplugin.Resource):
+    def __init__(self, connection, container):
+        self.connection = connection
+        self.container = container
+
+    def probe(self):
+        t = time.clock()
+        stats = self.connection.head_container(self.container)
+        _log.debug(repr(stats))
+        return [nagiosplugin.Metric('time', time.clock() - t, min=0, uom='s', context='time'),
+                nagiosplugin.Metric('object_count', int(stats['x-container-object-count']), min=0, context='object-count'),
+                nagiosplugin.Metric('bytes_used', int(stats['x-container-bytes-used']), min=0, uom="B", context='bytes'),
+                nagiosplugin.Metric('bytes_used_actual', int(stats['x-container-bytes-used-actual']), min=0, uom="B", context='bytes-actual')]
+
+class Object(nagiosplugin.Resource):
+    def __init__(self, connection, container, obj):
+        self.connection = connection
+        self.container = container
+        self.obj = obj
+
+    def probe(self):
+        t = time.clock()
+        stats = self.connection.head_object(self.container, self.obj)
+        _log.debug(repr(stats))
+        return [nagiosplugin.Metric('time', time.clock() - t, min=0, uom='s', context='time'),
+                nagiosplugin.Metric('size', int(stats['content-length']), min=0, uom="B", context='bytes')]
+
+@nagiosplugin.guarded
+def main():
+    argparser = argparse.ArgumentParser(usage='Usage: %(prog)s [options]',
+                                        description=__doc__)
+    argparser.add_argument('--version', action='version', version='''\
+%(prog)s 0.1
+Copyright 2015 MuchLearning
+''')
+    argparser.add_argument('--extra-opts',
+                           action=ExtraOptsAction,
+                           metavar='[section][@file]',
+                           help='Read options from an ini file. See http://nagiosplugins.org/extra-opts for usage and examples.')
+    argparser.add_argument('-A', '--auth', action='store',
+                           help="authentication URL (required)")
+    argparser.add_argument('-V', '--auth-version', action='store', dest='auth_version',
+                           default="1.0",
+                           help="Version for authentication (defaults to 1.0)")
+    argparser.add_argument('-U', '--user', action='store',
+                           help="OpenStack user (required)")
+    argparser.add_argument('-K', '--key', action='store',
+                           help="OpenStack key (required)")
+    argparser.add_argument('--os-tenant-name', action='store', dest='os_tenant_name',
+                           default=None,
+                           help="OpenStack tenant name (required for 2.0 authentication)")
+    argparser.add_argument('--os-tenant-id', action='store', dest='os_tenant_id',
+                           default=None,
+                           help="OpenStack tenant id")
+    argparser.add_argument('-t', '--type', action='store',
+                           default="account",
+                           choices=['account', 'container', 'object'],
+                           help="Swift type to check (defaults to account)")
+    argparser.add_argument('-c', '--container', action='store',
+                           help="Swift container to check (required for container or object types)")
+    argparser.add_argument('-o', '--object', action='store', dest='obj',
+                           help="Swift object to check (required for object type)")
+    argparser.add_argument('-v', '--verbose', action='count', default=0,
+                           help='increase output verbosity (use up to 3 times)')
+    opts = argparser.parse_args()
+
+    os_options = {}
+    if opts.os_tenant_id:
+        os_options["tenant_id"] = opts.os_tenant_id
+    connection = SwiftConnection(authurl=opts.auth, user=opts.user, key=opts.key, auth_version=opts.auth_version, tenant_name=opts.os_tenant_name, os_options=os_options)
+    if (opts.type == "object"):
+        checker = Object(connection, opts.container, opts.obj)
+    elif (opts.type == "container"):
+        checker = Container(conection, opts.container)
+    else:
+        checker = Account(connection)
+
+    check = nagiosplugin.Check(
+        checker,
+        nagiosplugin.ScalarContext('time', fmt_metric='{valueunit} response time'),
+        nagiosplugin.ScalarContext('object-count'),
+        nagiosplugin.ScalarContext('container-count'),
+        nagiosplugin.ScalarContext('bytes'),
+        nagiosplugin.ScalarContext('bytes-actual'),
+    )
+    check.main(verbose=opts.verbose)
+
+if __name__ == '__main__':
+    main()
