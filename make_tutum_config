@@ -81,7 +81,7 @@ define host {
     host_name   {{cluster.name}}
     address     0.0.0.0
     _tutum_id   {{cluster.uuid}}
-    hostgroups  docker-servers
+    hostgroups  docker-servers,tutum-cluster
 }
 
 define hostgroup {
@@ -125,6 +125,7 @@ define host {
     host_name   {{stack.name}}.stack
     address     0.0.0.0
     _tutum_id   {{stack.uuid}}
+    hostgroups  docker-servers,tutum-stack
 }
 
 define hostgroup {
@@ -146,7 +147,7 @@ define host {
     address     0.0.0.0
     _tutum_id   {{service.uuid}}{% if stack %}
     parents     {{stack.name}}.stack{% endif %}
-    hostgroups  docker-servers{% if stack %},{{stack.name}}-stack{% endif %}
+    hostgroups  docker-servers{% if stack %},{{stack.name}}-stack{% endif %},tutum-service
 }
 
 define hostgroup {
@@ -169,7 +170,7 @@ define host {
     address     {% if container.container_ports and container.container_ports|selectattr("published")|list|length == 0 %}{{container.private_ip}}{% else %}{{node.public_ip}}{% endif %}
     _tutum_id   {{container.uuid}}
     parents     {{service.public_dns}},{{node.external_fqdn}}
-    hostgroups  {{service.name}}{% if stack %}--{{stack.name}}{% endif %}-service,docker-servers
+    hostgroups  {{service.name}}{% if stack %}--{{stack.name}}{% endif %}-service,docker-servers,tutum-container
 }
 
 ''')
