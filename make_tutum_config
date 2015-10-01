@@ -103,7 +103,7 @@ define host {
     address     {{node.public_ip}}
     _tutum_id   {{node.uuid}}
     parents     {{cluster.name}}
-    hostgroups  {{cluster.name}}-cluster,docker-servers
+    hostgroups  {{cluster.name}}-cluster,docker-servers,tutum-node
 }
 
 define service {
