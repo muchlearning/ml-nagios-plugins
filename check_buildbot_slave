@@ -54,9 +54,13 @@ sub trim {
 
 if ($response->is_success) {
     my $result = decode_json $response->decoded_content;
-    if (${$result}{"connected"})
+    if (${$result}{"connected"} == JSON::true)
     {
         $np->add_message(OK, "version ${$result}{'version'}");
+    }
+    else
+    {
+        $np->add_message(CRITICAL, "not connected");
     }
 }
 else
@@ -80,6 +84,6 @@ sub _gt {
 }
 sub showExtra {
     return <<TEXT;
-Copyright (c) 2015 Hubert Chathi
+Copyright (c) 2015-2016 Hubert Chathi
 TEXT
 }
