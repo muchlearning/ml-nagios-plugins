@@ -2,6 +2,8 @@
 # nagios: -epn
 # Tutum service status monitor
 #
+# UNMAINTAINED
+#
 # Authors: Hubert Chathi <hubert@muchlearning.org>
 #
 # License: GPL v2 or later
