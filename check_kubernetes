@@ -1,0 +1,207 @@
+#!/usr/bin/perl -w
+# nagios: -epn
+# Monitor Kubernetes objects
+#
+# Authors: Hubert Chathi <hubert@muchlearning.org>
+#
+# License: GPL v2 or later
+
+use strict;
+use warnings;
+
+use Locale::gettext;
+use Nagios::Plugin;
+use LWP::UserAgent;
+use JSON;
+
+#$ENV{PERL_LWP_SSL_VERIFY_HOSTNAME} = 0;
+
+my $VERSION = '0.1';
+
+my $np = Nagios::Plugin->new(
+    version => $VERSION,
+    blurb => _gt('Kubernetes object status monitor for Nagios'),
+    usage => "Usage: %s <options>",
+    extra => &showExtra()
+    );
+
+$np->add_arg(
+    spec => 'apihost|a=s',
+    help => _gt('Kubernetes API server host'),
+    required => 1
+    );
+$np->add_arg(
+    spec => 'port|p=i',
+    help => _gt('Kubernetes API server port'),
+    default => 6443
+    );
+$np->add_arg(
+    spec => 'cacert=s',
+    help => _gt('Certification authority certificate file'),
+    required => 1
+    );
+$np->add_arg(
+    spec => 'cert=s',
+    help => _gt('Client certificate file'),
+    required => 1
+    );
+$np->add_arg(
+    spec => 'key=s',
+    help => _gt('Client key file'),
+    required => 1
+    );
+$np->add_arg(
+    spec => 'type=s',
+    help => _gt('object type (node, deployment, daemonset)'),
+    required => 1
+    );
+$np->add_arg(
+    spec => 'name|n=s',
+    help => _gt('name of object to check'),
+    required => 1
+    );
+$np->add_arg(
+    spec => 'namespace|N=s',
+    help => _gt('namespace that the object is in (if applicable)'),
+    default => 'default'
+    );
+
+$np->getopts();
+
+# for Net::SSL
+$ENV{HTTPS_CERT_FILE} = $np->opts->get('cert');
+$ENV{HTTPS_KEY_FILE}  = $np->opts->get('key');
+
+my $ua = LWP::UserAgent->new(
+    ssl_opts => {
+        SSL_ca_file => $np->opts->get('cacert'),
+        SSL_cert_file => $np->opts->get('cert'),
+        SSL_key_file => $np->opts->get('key')
+    }
+    );
+my $baseurl = "https://${\($np->opts->get('apihost'))}:${\($np->opts->get('port'))}/";
+
+SWITCH: for ($np->opts->get('type')) {
+    /^node$/i && do {
+        my $url = "${baseurl}api/v1/nodes/${\($np->opts->get('name'))}";
+        my $response = $ua->get($url,
+                               "Accept" => "application/json");
+        if ($response->is_success) {
+            my $result = decode_json $response->decoded_content;
+            my $ready = 0;
+            my @conditions = @{${$result}{"status"}{"conditions"}};
+            my $status = "";
+            foreach my $condition (@conditions) {
+                if (${$condition}{"type"} eq "Ready") {
+                    if (${$condition}{"status"} eq "True") {
+                        $ready = 1;
+                    }
+                    else
+                    {
+                        $status .= "Not";
+                    }
+                    $status .= "Ready";
+                }
+            }
+            $np->add_message($ready ? OK : CRITICAL, $status || "NotReady");
+            $np->add_message(OK, ${$result}{"status"}{"nodeInfo"}{"kubeletVersion"});
+        } else {
+            $np->add_message(CRITICAL, "Kubernetes API error: " . $response->status_line);
+        }
+        last SWITCH;
+    };
+    /^deployment$/i && do {
+        my $url = "${baseurl}apis/extensions/v1beta1/namespaces/${\($np->opts->get('namespace'))}/deployments/${\($np->opts->get('name'))}";
+        my $response = $ua->get($url,
+                               "Accept" => "application/json");
+        if ($response->is_success) {
+            my $result = decode_json $response->decoded_content;
+            my $generation = ${$result}{"metadata"}{"generation"};
+            my $observedGeneration = ${$result}{"status"}{"observedGeneration"};
+            my $replicas = ${$result}{"status"}{"replicas"};
+            my $updatedReplicas = ${$result}{"status"}{"updatedReplicas"};
+            my $availableReplicas = ${$result}{"status"}{"availableReplicas"};
+            $np->add_message($availableReplicas == 0 ? CRITICAL : ($replicas > $updatedReplicas || $replicas > $availableReplicas ? WARNING : OK), "replicas: $updatedReplicas/$availableReplicas/$replicas");
+            $np->add_message($generation > $observedGeneration ? WARNING : OK, "generation: $observedGeneration/$generation");
+        } else {
+            $np->add_message(CRITICAL, "Kubernetes API error: " . $response->status_line);
+        }
+    };
+    /^pod$/i && do {
+        my $url = "${baseurl}api/v1/namespaces/${\($np->opts->get('namespace'))}/pods/${\($np->opts->get('name'))}";
+        my $response = $ua->get($url,
+                               "Accept" => "application/json");
+        if ($response->is_success) {
+            my $result = decode_json $response->decoded_content;
+            my $ready = 0;
+            my @conditions = @{${$result}{"status"}{"conditions"}};
+            my $status = "";
+            foreach my $condition (@conditions) {
+                if (${$condition}{"type"} eq "Ready") {
+                    if (${$condition}{"status"} eq "True") {
+                        $ready = 1;
+                    }
+                    else
+                    {
+                        $status .= "Not";
+                    }
+                    $status .= "Ready";
+                }
+            }
+            $np->add_message($ready ? OK : CRITICAL, $status || "NotReady");
+            my @containerStatuses = @{${$result}{"status"}{"containerStatuses"}};
+            my $readyContainers = 0;
+            foreach my $containerStatus (@containerStatuses) {
+                $readyContainers++ if (${$containerStatus}{"ready"} == JSON::true);
+            }
+            $np->add_message($readyContainers < scalar(@containerStatuses) ? CRITICAL : OK, "$readyContainers/${\(scalar(@containerStatuses))}");
+        } else {
+            $np->add_message(CRITICAL, "Kubernetes API error: " . $response->status_line);
+        }
+    };
+    /^endpoint$/i && do {
+        my $url = "${baseurl}api/v1/namespaces/${\($np->opts->get('namespace'))}/endpoints/${\($np->opts->get('name'))}";
+        my $response = $ua->get($url,
+                               "Accept" => "application/json");
+        if ($response->is_success) {
+            my $result = decode_json $response->decoded_content;
+            my @subsets = @{${$result}{"subsets"}};
+            my @addresses = ();
+            foreach my $subset (@subsets) {
+                foreach my $address (@{${$subset}{"addresses"}}) {
+                    if (${$address}{"targetRef"} && ${$address}{"targetRef"}{"kind"} eq "Pod") {
+                        push @addresses, "${$address}{'targetRef'}{'namespace'}/${$address}{'targetRef'}{'name'}";
+                    } else {
+                        push @addresses, "IP:".${$address}{"ip"};
+                    }
+                }
+            }
+            if (@addresses) {
+                $np->add_message(OK, join(",",@addresses));
+            } else {
+                $np->add_message(OK, "<NONE>");
+            }
+        } else {
+            $np->add_message(CRITICAL, "Kubernetes API error: " . $response->status_line);
+        }
+    };
+}
+
+my ($status, $message) = $np->check_messages('join' => ' - ');
+$np->nagios_exit($status, $message);
+
+sub logD {
+        print STDERR 'DEBUG:   '.$_[0]."\n" if ($np->opts->verbose);
+}
+sub logW {
+        print STDERR 'WARNING: '.$_[0]."\n" if ($np->opts->verbose);
+}
+# Gettext wrapper
+sub _gt {
+        return gettext($_[0]);
+}
+sub showExtra {
+    return <<TEXT;
+Copyright (c) 2016 FastTrack Technologies
+TEXT
+}
