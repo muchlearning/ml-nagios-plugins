@@ -121,7 +121,9 @@ SWITCH: for ($np->opts->get('type')) {
             my $replicas = ${$result}{"status"}{"replicas"};
             my $updatedReplicas = ${$result}{"status"}{"updatedReplicas"};
             my $availableReplicas = ${$result}{"status"}{"availableReplicas"};
-            $np->add_message($availableReplicas == 0 ? CRITICAL : ($replicas > $updatedReplicas || $replicas > $availableReplicas ? WARNING : OK), "replicas: $updatedReplicas/$availableReplicas/$replicas");
+            $np->add_message(($availableReplicas == 0 && $replicas > 0) ? CRITICAL
+                              : ($replicas > $updatedReplicas || $replicas > $availableReplicas ? WARNING : OK),
+                            "replicas: $updatedReplicas/$availableReplicas/$replicas");
             $np->add_message($generation > $observedGeneration ? WARNING : OK, "generation: $observedGeneration/$generation");
         } else {
             $np->add_message(CRITICAL, "Kubernetes API error: " . $response->status_line);
