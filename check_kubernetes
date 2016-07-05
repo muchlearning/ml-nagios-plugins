@@ -118,9 +118,9 @@ SWITCH: for ($np->opts->get('type')) {
             my $result = decode_json $response->decoded_content;
             my $generation = ${$result}{"metadata"}{"generation"};
             my $observedGeneration = ${$result}{"status"}{"observedGeneration"};
-            my $replicas = ${$result}{"status"}{"replicas"};
-            my $updatedReplicas = ${$result}{"status"}{"updatedReplicas"};
-            my $availableReplicas = ${$result}{"status"}{"availableReplicas"};
+            my $replicas = ${$result}{"status"}{"replicas"} || 0;
+            my $updatedReplicas = ${$result}{"status"}{"updatedReplicas"} || 0;
+            my $availableReplicas = ${$result}{"status"}{"availableReplicas"} || 0;
             $np->add_message(($availableReplicas == 0 && $replicas > 0) ? CRITICAL
                               : ($replicas > $updatedReplicas || $replicas > $availableReplicas ? WARNING : OK),
                             "replicas: $updatedReplicas/$availableReplicas/$replicas");
